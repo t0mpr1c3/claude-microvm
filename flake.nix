@@ -45,7 +45,7 @@
               ];
 
               qemu.extraArgs = [
-                "-netdev" "user,id=usernet,hostfwd=tcp::7160-:7160"
+                "-netdev" "user,id=usernet"
                 "-device" "virtio-net-device,netdev=usernet"
               ];
             };
@@ -89,17 +89,20 @@
               SSL_CERT_FILE = "/etc/ssl/certs/ca-bundle.crt";
             };
 
+            # CLAUDE_CODE_OAUTH_TOKEN="${config.sops.secrets.CLAUDE_CODE_OAUTH_TOKEN.path}"
             programs.bash.interactiveShellInit = ''
               git config --global --add safe.directory /work 2>/dev/null || true
               cd /work 2>/dev/null || true
-              claude; sudo poweroff
+              mkdir -p .claude 2>/dev/null || true
+              echo '{}' > .claude/settings.json
+              CLAUDE_CODE_OAUTH_TOKEN="/home/tesco/.config/sops-nix/secrets/CLAUDE_CODE_OAUTH_TOKEN" claude; sudo poweroff
             '';
 
             systemd.tmpfiles.rules = [
               "d /work 0755 claude claude -"
             ];
 
-            networking.firewall.allowedTCPPorts = [ 7160 ];
+
             documentation.enable = false;
 
             system.stateVersion = "25.05";
@@ -117,9 +120,10 @@
         set -euo pipefail
         WORK="$(realpath "''${WORK_DIR:-$(pwd)}")"
         RUNTIME="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-        SOCK="$RUNTIME/claude-vm-virtiofs-work.sock"
-        UNIT="claude-vm-virtiofsd"
-        STATE="$RUNTIME/claude-vm-virtiofsd.workdir"
+        ID=$(echo -n "$WORK" | sha256sum | cut -c1-8)
+        SOCK="$RUNTIME/claude-vm-virtiofs-$ID.sock"
+        UNIT="claude-vm-virtiofsd-$ID"
+        STATE="$RUNTIME/claude-vm-virtiofsd-$ID.workdir"
 
         # (Re)start virtiofsd if not running or WORK_DIR changed
         NEED_START=1

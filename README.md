@@ -2,6 +2,8 @@
 
 Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in an isolated NixOS microVM via [microvm.nix](https://github.com/microvm-nix/microvm.nix) (QEMU+KVM). Your project directory is mounted read-write at `/work` inside the guest via virtiofs — no root required.
 
+Claude Code starts automatically on boot. Exiting claude shuts down the VM.
+
 ## Prerequisites
 
 - [Nix](https://nixos.org/) with flakes enabled
@@ -17,8 +19,6 @@ make vm.run
 WORK_DIR=/path/to/project make vm.run
 ```
 
-You'll be auto-logged in as `claude` and dropped into `/work`. Run `claude` to start a session.
-
 ## Usage from anywhere
 
 ### `nix run` (no install)
@@ -31,16 +31,16 @@ WORK_DIR=. nix run
 WORK_DIR=/path/to/project nix run /path/to/this/repo
 
 # Directly from git
-WORK_DIR=. nix run github:yourorg/claude-vm
+WORK_DIR=. nix run github:t0mpr1c3/claude-microvm
 ```
 
 ### Install to PATH
 
 ```sh
-nix profile install github:yourorg/claude-vm
+nix profile add github:t0mpr1c3/claude-microvm
 
 # Now available everywhere
-WORK_DIR=/path/to/project microvm-run
+WORK_DIR=/path/to/project claude-run
 ```
 
 ### As a flake input
@@ -49,7 +49,7 @@ Add as a dependency in another project's `flake.nix`:
 
 ```nix
 {
-  inputs.claude-vm.url = "github:yourorg/claude-vm";
+  inputs.claude-vm.url = "github:t0mpr1c3/claude-microvm";
 
   outputs = { nixpkgs, claude-vm, ... }:
     let system = "x86_64-linux"; in {
@@ -66,31 +66,41 @@ Then `nix develop` gives you `microvm-run` in the shell.
 
 ### virtiofs (host directory sharing)
 
-The host `WORK_DIR` is shared into the VM at `/work` using virtiofs. A `virtiofsd` daemon is started automatically as a systemd user service (`claude-vm-virtiofsd`) — no root or sudo needed. It runs unprivileged in a user namespace with UID/GID translation so files created inside the VM are owned by your host user.
+The host `WORK_DIR` is shared into the VM at `/work` using virtiofs. A `virtiofsd` daemon is started automatically as a systemd user service (`claude-vm-virtiofsd-<id>`, where `<id>` is derived from the work directory path) — no root or sudo needed. It runs unprivileged in a user namespace with UID/GID translation so files created inside the VM are owned by your host user.
 
-The daemon persists between VM restarts for fast re-launches. It automatically restarts when `WORK_DIR` changes. Manage it with:
+Each work directory gets its own virtiofsd instance, so multiple VMs can run in parallel on different projects. The daemon persists between VM restarts for fast re-launches. Manage it with:
 
 ```sh
-systemctl --user status claude-vm-virtiofsd
-systemctl --user stop claude-vm-virtiofsd
+systemctl --user list-units 'claude-vm-virtiofsd-*'
+systemctl --user stop claude-vm-virtiofsd-<id>
 ```
+
+### Sandboxing
+
+The VM provides strong isolation from the host:
+
+- **Filesystem** — only `/work` is shared; everything else is VM-local and ephemeral
+- **Processes** — completely isolated (separate kernel)
+- **Network** — QEMU user-mode NAT; the VM can reach the internet but can't bind host ports
+
+To let Claude Code run fully autonomously inside the VM (no permission prompts), add `--dangerously-skip-permissions` to the `claude` invocation in `flake.nix`.
 
 ### Shutting down
 
-Exiting the shell runs `sudo poweroff` automatically. You can also run it manually.
+Exiting Claude Code automatically powers off the VM.
 
 ## Customization
 
 ### Exposing ports
 
-Port 7160 (Claude OAuth callback) is forwarded by default. To expose additional ports, edit `flake.nix`:
+No ports are forwarded by default. To expose ports, edit `flake.nix`:
 
 ```nix
 microvm.qemu.extraArgs = [
-  "-netdev" "user,id=usernet,hostfwd=tcp::7160-:7160,hostfwd=tcp::8080-:8080"
+  "-netdev" "user,id=usernet,hostfwd=tcp::8080-:8080"
   "-device" "virtio-net-device,netdev=usernet"
 ];
-networking.firewall.allowedTCPPorts = [ 7160 8080 ];
+networking.firewall.allowedTCPPorts = [ 8080 ];
 ```
 
 Rebuild with `make vm`.
@@ -102,5 +112,4 @@ Rebuild with `make vm`.
 | RAM      | 4096 MB |
 | vCPUs    | 4       |
 | Network  | User-mode (SLiRP) |
-| Store    | Host nix store via 9p (read-only) |
 | Work dir | Host directory via virtiofs (read-write) |
