@@ -89,13 +89,25 @@
               SSL_CERT_FILE = "/etc/ssl/certs/ca-bundle.crt";
             };
 
-            # CLAUDE_CODE_OAUTH_TOKEN="${config.sops.secrets.CLAUDE_CODE_OAUTH_TOKEN.path}"
             programs.bash.interactiveShellInit = ''
               git config --global --add safe.directory /work 2>/dev/null || true
               cd /work 2>/dev/null || true
               mkdir -p .claude 2>/dev/null || true
-              echo '{}' > .claude/settings.json
-              CLAUDE_CODE_OAUTH_TOKEN="/home/tesco/.config/sops-nix/secrets/CLAUDE_CODE_OAUTH_TOKEN" claude; sudo poweroff
+stop
+              ##############################################################################################
+              #
+              #                        ADD COMMAND LINE OPTIONS TO CLAUDE HERE
+              #
+              ##############################################################################################
+
+              CLAUDE_CODE_OAUTH_TOKEN="/work/CLAUDE_CODE_OAUTH_TOKEN" claude \
+                  --settings='/work/settings.json'
+
+              # delete secret (if possible)
+              rm /.claude/secrets/CLAUDE_CODE_OAUTH_TOKEN 2>/dev/null || true
+
+              # power down VM (but leave the daemon running) 
+              sudo poweroff
             '';
 
             systemd.tmpfiles.rules = [
@@ -137,6 +149,14 @@
 
         if [ "$NEED_START" = "1" ]; then
           rm -f "$SOCK"
+
+          # copy settings from .claude/settings.json
+          rm -f $WORK/settings.json
+          cp /home/tesco/.claude/settings.json $WORK 2>/dev/null || true
+
+          # copy secret from {config.sops.secrets.CLAUDE_CODE_OAUTH_TOKEN.path}
+          rm -f /home/tesco/.claude/secrets/CLAUDE_CODE_OAUTH_TOKEN
+          cp /home/tesco/.config/sops-nix/secrets/CLAUDE_CODE_OAUTH_TOKEN $WORK 2>/dev/null || true
 
           # virtiofsd runs unprivileged in a user namespace (--sandbox=namespace).
           # --uid-map / --gid-map: map host user to namespace root (single-entry, no /etc/subuid needed)
